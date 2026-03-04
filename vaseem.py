@@ -584,7 +584,58 @@ hr { border-color: var(--border) !important; margin: 1.2rem 0 !important; }
 </style>
 """, unsafe_allow_html=True)
 
+# ── FLOATING SIDEBAR TOGGLE (white chevron) ─────────────────────────────
+st.markdown("""
+<div style="
+    position: fixed;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 99999;
+    background: rgba(20, 30, 50, 0.9);
+    backdrop-filter: blur(4px);
+    border: 1px solid #2a3a5a;
+    border-left: none;
+    border-radius: 0 30px 30px 0;
+    padding: 12px 8px 12px 12px;
+    box-shadow: 2px 4px 20px rgba(0,0,0,0.5);
+    cursor: pointer;
+    transition: 0.2s;
+    color: white;
+    font-size: 24px;
+    font-weight: bold;
+    line-height: 1;
+" id="sidebarToggleBtn" onclick="toggleSidebarFromOutside()">
+    ❯
+</div>
 
+<script>
+function toggleSidebarFromOutside() {
+    const parentDoc = window.parent.document;
+    
+    // Try to find the expand button (visible when sidebar is collapsed)
+    const expandBtn = parentDoc.querySelector('[data-testid="stSidebarCollapseButton"]');
+    if (expandBtn) {
+        expandBtn.click();
+        return;
+    }
+    
+    // If expand button not found, sidebar is probably open – find its close button
+    const sidebar = parentDoc.querySelector('[data-testid="stSidebar"]');
+    if (sidebar) {
+        const closeBtn = sidebar.querySelector('button[kind="closeSidebar"]');
+        if (closeBtn) {
+            closeBtn.click();
+            return;
+        }
+    }
+    
+    // Fallback: try to click the header hamburger (if header visible)
+    const hamburger = parentDoc.querySelector('[data-testid="stSidebarNav"] button');
+    if (hamburger) hamburger.click();
+}
+</script>
+""", unsafe_allow_html=True)
 # ── MODEL LOADING ──────────────────────────────────────────────────────────────
 @st.cache_resource(show_spinner="Loading AI models…")
 def load_models():
