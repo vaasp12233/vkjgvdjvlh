@@ -325,6 +325,8 @@ hr { border-color: var(--border) !important; }
     line-height: 1.1;
     margin-bottom: .35rem;
 }
+.as{ border-radius : 50%;
+}
 .metric-card .mc-label {
     font-family: var(--font-body);
     font-weight: 500;
@@ -715,7 +717,7 @@ st.markdown('<div class="section-label">Input Message</div>', unsafe_allow_html=
 col_mic, col_text = st.columns([1, 6])
 
 with col_mic:
-    st.markdown("####")  # vertical alignment
+    st.markdown("class="as"")  # vertical alignment
     text_from_voice = speech_to_text(
         language='en',
         start_prompt="🎤",
