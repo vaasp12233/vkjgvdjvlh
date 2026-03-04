@@ -584,7 +584,7 @@ hr { border-color: var(--border) !important; margin: 1.2rem 0 !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# ── FLOATING SIDEBAR TOGGLE (white chevron) ─────────────────────────────
+
 # ── MODEL LOADING ──────────────────────────────────────────────────────────────
 @st.cache_resource(show_spinner="Loading AI models…")
 def load_models():
@@ -944,73 +944,7 @@ if st.session_state.analysis_done and st.session_state.results:
             st.toast("✅ Copied!", icon="📋")
     st.markdown('</div>', unsafe_allow_html=True)
 
-# ── FLOATING SIDEBAR TOGGLE (WHITE CHEVRON) ─────────────────────────────
-st.components.v1.html("""
-<div style="
-    position: fixed;
-    left: 0;
-    top: 50%;
-    transform: translateY(-50%);
-    z-index: 999999;
-    background: rgba(30, 40, 60, 0.85);
-    backdrop-filter: blur(6px);
-    border: 1px solid #3a4a6a;
-    border-left: none;
-    border-radius: 0 30px 30px 0;
-    padding: 14px 10px 14px 14px;
-    box-shadow: 0 8px 25px rgba(0,0,0,0.6);
-    cursor: pointer;
-    transition: all 0.2s ease;
-    color: white;
-    font-size: 28px;
-    font-weight: 800;
-    line-height: 0.8;
-    font-family: 'Syne', sans-serif;
-" id="sidebarToggleBtn" onclick="toggleSidebar()">
-    ❯
-</div>
 
-<script>
-function toggleSidebar() {
-    // Access the parent document (where Streamlit's UI lives)
-    const parentDoc = window.parent.document;
-
-    // Try to find the expand button (visible when sidebar is collapsed)
-    const expandBtn = parentDoc.querySelector('[data-testid="stSidebarCollapseButton"]');
-    if (expandBtn) {
-        expandBtn.click();
-        return;
-    }
-
-    // If expand button not found, sidebar is probably open – find its close button
-    const sidebar = parentDoc.querySelector('[data-testid="stSidebar"]');
-    if (sidebar) {
-        const closeBtn = sidebar.querySelector('button[kind="closeSidebar"]');
-        if (closeBtn) {
-            closeBtn.click();
-            return;
-        }
-    }
-
-    // Last resort: try the header hamburger (if header is visible)
-    const hamburger = parentDoc.querySelector('[data-testid="stSidebarNav"] button');
-    if (hamburger) hamburger.click();
-}
-
-// Optional: add a hover effect via JS
-const btn = document.getElementById('sidebarToggleBtn');
-if (btn) {
-    btn.addEventListener('mouseenter', () => {
-        btn.style.background = 'rgba(50, 70, 100, 0.95)';
-        btn.style.boxShadow = '0 0 20px rgba(0,212,255,0.4)';
-    });
-    btn.addEventListener('mouseleave', () => {
-        btn.style.background = 'rgba(30, 40, 60, 0.85)';
-        btn.style.boxShadow = 'none';
-    });
-}
-</script>
-""", height=0, width=0)
 # ── FOOTER ────────────────────────────────────────────────────────────────────
 st.markdown("---")
 st.markdown("""
