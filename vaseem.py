@@ -4,6 +4,7 @@ import pickle
 import re
 import numpy as np
 import time
+import hashlib  # for unique result hash
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -20,8 +21,10 @@ if 'analysis_done' not in st.session_state:
     st.session_state.analysis_done = False
 if 'results' not in st.session_state:
     st.session_state.results = None
-if 'speak_alert' not in st.session_state:          # new flag for TTS
+if 'speak_alert' not in st.session_state:
     st.session_state.speak_alert = False
+if 'spoken_for_hash' not in st.session_state:   # track which result has been spoken automatically
+    st.session_state.spoken_for_hash = None
 
 # --- CUSTOM CSS (unchanged) ---
 st.markdown("""
@@ -859,26 +862,63 @@ if st.session_state.analysis_done and st.session_state.results:
 
     st.markdown("---")
 
-    # ── VOICE ALERT BUTTON (only for Suspicious/High Risk) ──
-    if res['risk'] in ["Suspicious", "High Risk"]:
-        col_speak, _ = st.columns([1, 5])
-        with col_speak:
-            if st.button("🔊 Speak Alert", use_container_width=True):
-                st.session_state.speak_alert = True
-                st.rerun()
-
-    # ── TRIGGER TEXT‑TO‑SPEECH ──
-    if st.session_state.get('speak_alert'):
-        # Construct the message to be spoken
-        text_to_speak = f"Alert! {res['risk']} scam detected. Fraud type: {res['fraud_type']}. Do not respond to this message."
+    # ========== AUTOMATIC VOICE ALERT (once per unique result) ==========
+    current_hash = hashlib.md5(f"{res['risk']}_{res['fraud_type']}".encode()).hexdigest()
+    if st.session_state.spoken_for_hash != current_hash:
+        st.session_state.spoken_for_hash = current_hash
+        if res['risk'] == "High Risk":
+            repeat = 3
+            message = f"High risk scam detected. Fraud type: {res['fraud_type']}. Do not respond."
+        elif res['risk'] == "Suspicious":
+            repeat = 1
+            message = f"Suspicious message detected. Fraud type: {res['fraud_type']}. Be cautious."
+        else:  # Safe
+            repeat = 1
+            message = "Message appears safe. Stay vigilant."
         # Escape for JavaScript
-        text_to_speak_js = text_to_speak.replace("'", "\\'").replace('"', '&quot;')
-        # Inject a tiny HTML with JavaScript that speaks and then resets the flag via rerun
+        message_js = message.replace("'", "\\'").replace('"', '&quot;')
+        js_code = f"""
+        <script>
+        (function() {{
+            var msg = "{message_js}";
+            var times = {repeat};
+            function speak(i) {{
+                if (i >= times) return;
+                var utterance = new SpeechSynthesisUtterance(msg);
+                utterance.rate = 0.9;
+                utterance.pitch = 1;
+                utterance.volume = 1;
+                utterance.onend = function() {{ speak(i+1); }};
+                window.speechSynthesis.speak(utterance);
+            }}
+            speak(0);
+        }})();
+        </script>
+        """
+        st.components.v1.html(js_code, height=0)
+
+    # ========== MANUAL VOICE ALERT BUTTON (for all risk levels) ==========
+    col_speak, _ = st.columns([1, 5])
+    with col_speak:
+        if st.button("🔊 Speak Alert", use_container_width=True):
+            st.session_state.speak_alert = True
+            st.rerun()
+
+    # ── TRIGGER MANUAL TEXT‑TO‑SPEECH (if button was clicked) ──
+    if st.session_state.get('speak_alert'):
+        # Choose message based on risk
+        if res['risk'] == "High Risk":
+            manual_message = f"Alert! {res['risk']} scam detected. Fraud type: {res['fraud_type']}. Do not respond to this message."
+        elif res['risk'] == "Suspicious":
+            manual_message = f"Alert! {res['risk']} message detected. Fraud type: {res['fraud_type']}. Be cautious."
+        else:
+            manual_message = "This message appears safe. Stay vigilant."
+        manual_js = manual_message.replace("'", "\\'").replace('"', '&quot;')
         st.components.v1.html(
             f"""
             <script>
-            var utterance = new SpeechSynthesisUtterance("{text_to_speak_js}");
-            utterance.rate = 0.9;   // slightly slower for clarity
+            var utterance = new SpeechSynthesisUtterance("{manual_js}");
+            utterance.rate = 0.9;
             utterance.pitch = 1;
             utterance.volume = 1;
             window.speechSynthesis.speak(utterance);
@@ -886,7 +926,6 @@ if st.session_state.analysis_done and st.session_state.results:
             """,
             height=0
         )
-        # Reset flag so it doesn't speak again on next rerun
         st.session_state.speak_alert = False
         st.rerun()
 
