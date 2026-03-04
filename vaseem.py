@@ -1,3 +1,4 @@
+from streamlit_mic_recorder import speech_to_text
 import streamlit as st
 import pickle
 import re
