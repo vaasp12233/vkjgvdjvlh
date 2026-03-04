@@ -1,11 +1,10 @@
-
 from streamlit_mic_recorder import speech_to_text
 import streamlit as st
 import pickle
 import re
-import numpy as np
-import time
-import hashlib  # for unique result hash
+import hashlib
+import html
+from pathlib import Path
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -16,23 +15,26 @@ st.set_page_config(
 )
 
 # --- INITIALIZE SESSION STATE ---
-if 'input_text' not in st.session_state:
-    st.session_state.input_text = ""
-if 'analysis_done' not in st.session_state:
-    st.session_state.analysis_done = False
-if 'results' not in st.session_state:
-    st.session_state.results = None
-if 'speak_alert' not in st.session_state:
-    st.session_state.speak_alert = False
-if 'spoken_for_hash' not in st.session_state:   # track which result has been spoken automatically
-    st.session_state.spoken_for_hash = None
+defaults = {
+    'input_text': "",
+    'analysis_done': False,
+    'results': None,
+    'speak_alert': False,
+    'spoken_for_hash': None,
+    'last_analyzed_text': "",      # to detect manual changes
+    'auto_voice_enabled': True,    # user preference
+    'show_sidebar': True,           # sidebar toggle
+}
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
 
-# --- CUSTOM CSS (unchanged) ---
+# --- CUSTOM CSS (with additions for sidebar toggle & circular mic) ---
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap');
 
-/* ── BASE ── */
+/* ── BASE (unchanged) ── */
 :root {
     --bg:        #080c14;
     --surface:   #0d1424;
@@ -59,18 +61,40 @@ html, body, .stApp {
     line-height: 1.6 !important;
 }
 
-/* ── HIDE STREAMLIT CHROME ── */
+/* Hide Streamlit chrome */
 #MainMenu, footer, header { visibility: hidden; }
 .block-container { padding: 2rem 3rem 4rem !important; max-width: 1280px !important; }
 
-/* ── SIDEBAR ── */
+/* ── SIDEBAR with toggle support ── */
 [data-testid="stSidebar"] {
     background: var(--surface) !important;
     border-right: 1px solid var(--border) !important;
+    transition: width 0.3s ease, min-width 0.3s ease !important;
+    overflow-x: hidden !important;
 }
+[data-testid="stSidebar"][aria-expanded="true"] {
+    min-width: 280px !important;
+    width: auto !important;
+}
+/* When sidebar is "hidden", we collapse it via content visibility */
+.sidebar-collapsed [data-testid="stSidebar"] {
+    width: 0 !important;
+    min-width: 0 !important;
+    border-right: none !important;
+}
+/* Buttons inside sidebar */
 [data-testid="stSidebar"] * { color: var(--text) !important; }
 
-/* ── SIDEBAR HEADER ── */
+/* Sidebar content wrapper – hidden when collapsed */
+.sidebar-content {
+    display: block;
+    width: 280px;
+}
+.sidebar-collapsed .sidebar-content {
+    display: none;
+}
+
+/* Sidebar header */
 .sidebar-brand {
     text-align: center;
     padding: 1.5rem 0 1rem;
@@ -104,7 +128,7 @@ html, body, .stApp {
     margin-top: .3rem;
 }
 
-/* ── SIDEBAR HELPLINE ── */
+/* Helpline box */
 .helpline-box {
     background: linear-gradient(135deg, rgba(255,23,68,.12), rgba(255,23,68,.06));
     border: 1px solid rgba(255,23,68,.35);
@@ -139,7 +163,7 @@ html, body, .stApp {
 }
 .helpline-box a:hover { text-decoration: underline; }
 
-/* ── SIDEBAR SECTION HEADINGS ── */
+/* Sidebar section titles */
 .sidebar-section-title {
     font-family: var(--font-body);
     font-weight: 600;
@@ -152,7 +176,7 @@ html, body, .stApp {
     margin-bottom: .7rem;
 }
 
-/* ── SIDEBAR METRIC CARDS ── */
+/* Sidebar metric cards */
 .stat-row {
     display: flex;
     gap: .5rem;
@@ -179,7 +203,7 @@ html, body, .stApp {
     margin-top: .15rem;
 }
 
-/* ── SIDEBAR QUICK-TEST BUTTONS ── */
+/* Sidebar quick‑test buttons */
 [data-testid="stSidebar"] .stButton > button {
     background: var(--panel) !important;
     border: 1px solid var(--border) !important;
@@ -201,7 +225,7 @@ html, body, .stApp {
     box-shadow: 0 0 12px rgba(0,229,255,.12) !important;
 }
 
-/* ── SIDEBAR CHECKBOXES ── */
+/* Sidebar checkboxes */
 [data-testid="stSidebar"] .stCheckbox label {
     font-family: var(--font-body) !important;
     font-size: .875rem !important;
@@ -209,7 +233,7 @@ html, body, .stApp {
 }
 [data-testid="stSidebar"] .stCheckbox { margin-bottom: .3rem; }
 
-/* ── MAIN HERO HEADER ── */
+/* Main hero header */
 .hero-section {
     position: relative;
     padding: 2.5rem 0 1.8rem;
@@ -251,7 +275,7 @@ html, body, .stApp {
     letter-spacing: .04em;
 }
 
-/* ── INPUT AREA ── */
+/* Input area */
 .stTextArea label {
     font-family: var(--font-body) !important;
     font-weight: 600 !important;
@@ -279,7 +303,7 @@ html, body, .stApp {
 }
 .stTextArea textarea::placeholder { color: var(--muted) !important; opacity: .7 !important; }
 
-/* ── ANALYZE BUTTON ── */
+/* Analyze button */
 .stButton > button[kind="primary"] {
     background: linear-gradient(135deg, var(--accent2) 0%, var(--accent) 100%) !important;
     border: none !important;
@@ -301,10 +325,10 @@ html, body, .stApp {
 }
 .stButton > button[kind="primary"]:active { transform: translateY(0) !important; }
 
-/* ── DIVIDER ── */
+/* Divider */
 hr { border-color: var(--border) !important; }
 
-/* ── METRIC CARDS ROW ── */
+/* Metric cards row */
 .metric-card {
     background: var(--panel);
     border: 1px solid var(--border);
@@ -346,7 +370,7 @@ hr { border-color: var(--border) !important; }
 .mc-accent2 { color: var(--accent2);}
 .mc-white   { color: #fff;          }
 
-/* ── VERDICT BANNER ── */
+/* Verdict banner */
 .verdict-banner {
     border-radius: 14px;
     padding: 1.5rem 1.8rem;
@@ -373,7 +397,7 @@ hr { border-color: var(--border) !important; }
     line-height: 1.65;
 }
 
-/* ── HIGHLIGHTED MESSAGE BOX ── */
+/* Highlighted message box */
 .highlight-box {
     background: var(--panel);
     border: 1px solid var(--border);
@@ -386,7 +410,7 @@ hr { border-color: var(--border) !important; }
     color: var(--text);
 }
 
-/* ── TIPS LIST ── */
+/* Tips list */
 .tip-item {
     background: var(--panel);
     border: 1px solid var(--border);
@@ -406,7 +430,7 @@ hr { border-color: var(--border) !important; }
     color: var(--text);
 }
 
-/* ── EXPANDERS ── */
+/* Expanders */
 .streamlit-expanderHeader {
     background: var(--panel) !important;
     border: 1px solid var(--border) !important;
@@ -425,7 +449,7 @@ hr { border-color: var(--border) !important; }
     padding: 1.2rem !important;
 }
 
-/* ── REPORT SUPPORT BOX ── */
+/* Report support box */
 .report-card {
     background: var(--panel);
     border: 1px solid var(--border);
@@ -447,7 +471,7 @@ hr { border-color: var(--border) !important; }
 .report-card a { color: var(--accent); text-decoration: none; }
 .report-card a:hover { text-decoration: underline; color: var(--accent2); }
 
-/* ── SHARE BUTTONS ── */
+/* Share buttons */
 div[data-testid="column"] .stButton > button {
     background: var(--panel) !important;
     border: 1px solid var(--border) !important;
@@ -463,17 +487,7 @@ div[data-testid="column"] .stButton > button:hover {
     background: rgba(0,229,255,.05) !important;
 }
 
-/* ── PROGRESS BAR ── */
-.stProgress > div > div > div > div {
-    background: linear-gradient(90deg, var(--accent2), var(--accent)) !important;
-    border-radius: 999px !important;
-}
-.stProgress > div > div > div {
-    background: var(--panel) !important;
-    border-radius: 999px !important;
-}
-
-/* ── FOOTER ── */
+/* Footer */
 .app-footer {
     text-align: center;
     padding: 1.5rem 0 .5rem;
@@ -495,7 +509,7 @@ div[data-testid="column"] .stButton > button:hover {
     letter-spacing: .03em;
 }
 
-/* ── SECTION LABEL ── */
+/* Section label */
 .section-label {
     font-family: var(--font-body);
     font-weight: 600;
@@ -515,27 +529,68 @@ div[data-testid="column"] .stButton > button:hover {
     background: var(--border);
 }
 
-/* ── ALERTS/WARNINGS ── */
+/* Alerts / warnings */
 .stAlert { border-radius: 10px !important; font-family: var(--font-body) !important; font-size: .88rem !important; line-height: 1.55 !important; }
 
-/* ── SPINNER ── */
+/* Spinner */
 .stSpinner > div { border-top-color: var(--accent) !important; }
+
+/* ===== NEW STYLES FOR MICROPHONE & SIDEBAR TOGGLE ===== */
+/* Circular mic button */
+div[data-testid="stHorizontalBlock"] > div:first-child .stButton > button {
+    width: 48px !important;
+    height: 48px !important;
+    border-radius: 50% !important;
+    padding: 0 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    font-size: 1.5rem !important;
+    background: var(--panel) !important;
+    border: 1px solid var(--border) !important;
+    transition: all 0.2s ease !important;
+}
+div[data-testid="stHorizontalBlock"] > div:first-child .stButton > button:hover {
+    border-color: var(--accent) !important;
+    color: var(--accent) !important;
+    box-shadow: 0 0 12px rgba(0,229,255,.2) !important;
+}
+
+/* Sidebar toggle button container */
+.sidebar-toggle-btn {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 0.5rem;
+}
+.sidebar-toggle-btn .stButton > button {
+    background: var(--panel) !important;
+    border: 1px solid var(--border) !important;
+    color: var(--text-soft) !important;
+    border-radius: 8px !important;
+    padding: 0.3rem 0.8rem !important;
+    font-size: 1rem !important;
+}
 </style>
 """, unsafe_allow_html=True)
+
+# --- APPLY SIDEBAR COLLAPSE CLASS BASED ON SESSION STATE ---
+if not st.session_state.show_sidebar:
+    st.markdown('<style>.sidebar-collapsed [data-testid="stSidebar"] { width: 0 !important; min-width: 0 !important; border-right: none !important; }</style>', unsafe_allow_html=True)
 
 # --- LOAD MODELS ---
 @st.cache_resource(show_spinner="Loading AI models...")
 def load_models():
     models = {}
+    model_dir = Path(__file__).parent
     try:
-        models['model_risk'] = pickle.load(open('model_risk.pkl', 'rb'))
-        models['tfidf'] = pickle.load(open('tfidf_vectorizer.pkl', 'rb'))
-        models['label_encoder'] = pickle.load(open('label_encoder.pkl', 'rb'))
+        models['model_risk'] = pickle.load(open(model_dir / 'model_risk.pkl', 'rb'))
+        models['tfidf'] = pickle.load(open(model_dir / 'tfidf_vectorizer.pkl', 'rb'))
+        models['label_encoder'] = pickle.load(open(model_dir / 'label_encoder.pkl', 'rb'))
     except FileNotFoundError as e:
         st.error(f"⚠️ Missing model file: {e}. Please ensure model_risk.pkl, tfidf_vectorizer.pkl, and label_encoder.pkl are in the app directory.")
         return None
     try:
-        models['model_type'] = pickle.load(open('model_type.pkl', 'rb'))
+        models['model_type'] = pickle.load(open(model_dir / 'model_type.pkl', 'rb'))
         models['type_model_available'] = True
     except FileNotFoundError:
         models['type_model_available'] = False
@@ -554,7 +609,7 @@ def clean_text(text):
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
-# --- KEYWORD HIGHLIGHTING ---
+# --- KEYWORD HIGHLIGHTING (with HTML escaping) ---
 def highlight_keywords(text):
     keywords = {
         'upi': '#00e5ff', 'gpay': '#00e5ff', 'phonepe': '#00e5ff',
@@ -568,16 +623,17 @@ def highlight_keywords(text):
         'matrimony': '#f06292', 'shaadi': '#f06292', 'caste': '#f06292',
         'education': '#26c6da', 'scholarship': '#26c6da', 'exam': '#26c6da'
     }
-    highlighted = text
+    # Escape HTML in original text to prevent injection
+    escaped = html.escape(text)
     for word, color in keywords.items():
         pattern = re.compile(f'({re.escape(word)})', re.IGNORECASE)
-        highlighted = pattern.sub(
+        escaped = pattern.sub(
             f'<span style="background:rgba(0,0,0,.35);color:{color};border-radius:3px;padding:1px 5px;font-weight:700;border-bottom:2px solid {color};">\\1</span>',
-            highlighted
+            escaped
         )
-    return highlighted
+    return escaped
 
-# --- FALLBACK RULE‑BASED FRAUD TYPE CLASSIFIER ---
+# --- FALLBACK RULE‑BASED FRAUD TYPE CLASSIFIER (updated with courier) ---
 def rule_based_fraud_type(message):
     msg = message.lower()
     if any(k in msg for k in ['upi', 'gpay', 'phonepe', 'pin', 'otp', 'bank', 'account', 'atm']):
@@ -588,10 +644,12 @@ def rule_based_fraud_type(message):
         return 'Lottery Scam'
     elif any(k in msg for k in ['kyc', 'update', 'verify', 'aadhaar', 'pan', 'link', 'click']):
         return 'Phishing'
+    elif any(k in msg for k in ['courier', 'parcel', 'dhl', 'fedex', 'customs']):
+        return 'Courier Scam'
     else:
         return 'Others'
 
-# --- PREVENTIVE TIPS ---
+# --- PREVENTIVE TIPS (added Courier Scam) ---
 def get_preventive_tips(fraud_type):
     tips = {
         "UPI Fraud": [
@@ -618,6 +676,12 @@ def get_preventive_tips(fraud_type):
             "⚠️ Check for spelling mistakes in URLs",
             "📞 Report phishing to [report.phishing@gmail.com](mailto:report.phishing@gmail.com)"
         ],
+        "Courier Scam": [
+            "❌ Genuine courier companies never ask for customs payment via SMS links",
+            "✅ Track your parcel using official website only",
+            "⚠️ Be wary of unexpected parcel notifications",
+            "📞 Report courier scams to **1930**"
+        ],
         "Others": [
             "❌ Don't click on unknown links",
             "✅ Verify sender identity before responding",
@@ -638,72 +702,85 @@ SAMPLE_MESSAGES = {
 }
 
 # ══════════════════════════════════════════════════════
-# SIDEBAR
+# SIDEBAR (toggleable content)
 # ══════════════════════════════════════════════════════
 with st.sidebar:
-    st.markdown("""
-    <div class="sidebar-brand">
-        <span class="shield-icon">🛡️</span>
-        <h2>FRAUD SHIELD PRO</h2>
-        <p>AI-Powered Cyber Protection</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.markdown("""
-    <div class="helpline-box">
-        <div class="hl-label">🚨 Official Cyber Helpline</div>
-        <div class="hl-number">1930</div>
-        <a href="https://www.cybercrime.gov.in" target="_blank">cybercrime.gov.in →</a>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.markdown('<div class="sidebar-section-title">Safety Checklist</div>', unsafe_allow_html=True)
-    safe1 = st.checkbox("Never share OTP")
-    safe2 = st.checkbox("Never share UPI PIN")
-    safe3 = st.checkbox("Check links before clicking")
-    safe4 = st.checkbox("Verify sender identity")
-    if safe1 and safe2 and safe3 and safe4:
-        st.success("✅ You're following all safety practices!")
-
-    st.markdown('<div class="sidebar-section-title" style="margin-top:.8rem">Model Performance</div>', unsafe_allow_html=True)
-    if models and models.get('model_risk'):
+    # Only show full content if sidebar is toggled ON
+    if st.session_state.show_sidebar:
         st.markdown("""
-        <div class="stat-row">
-            <div class="stat-card"><div class="sv">99.9%</div><div class="sl">Binary Accuracy</div></div>
-            <div class="stat-card"><div class="sv">94.5%</div><div class="sl">Type Accuracy</div></div>
+        <div class="sidebar-brand">
+            <span class="shield-icon">🛡️</span>
+            <h2>FRAUD SHIELD PRO</h2>
+            <p>AI-Powered Cyber Protection</p>
         </div>
         """, unsafe_allow_html=True)
 
-    st.markdown('<div class="sidebar-section-title" style="margin-top:.8rem">Quick Test Messages</div>', unsafe_allow_html=True)
+        st.markdown("""
+        <div class="helpline-box">
+            <div class="hl-label">🚨 Official Cyber Helpline</div>
+            <div class="hl-number">1930</div>
+            <a href="https://www.cybercrime.gov.in" target="_blank">cybercrime.gov.in →</a>
+        </div>
+        """, unsafe_allow_html=True)
 
-    if st.button("📧 UPI Fraud Sample"):
-        st.session_state.input_text = SAMPLE_MESSAGES["UPI Fraud"]
-        st.session_state.analysis_done = False
-        st.rerun()
-    if st.button("💼 Job Scam Sample"):
-        st.session_state.input_text = SAMPLE_MESSAGES["Job Scam"]
-        st.session_state.analysis_done = False
-        st.rerun()
-    if st.button("🎲 Lottery Scam Sample"):
-        st.session_state.input_text = SAMPLE_MESSAGES["Lottery Scam"]
-        st.session_state.analysis_done = False
-        st.rerun()
-    if st.button("🔗 Phishing Sample"):
-        st.session_state.input_text = SAMPLE_MESSAGES["Phishing"]
-        st.session_state.analysis_done = False
-        st.rerun()
-    if st.button("📦 Courier Scam Sample"):
-        st.session_state.input_text = SAMPLE_MESSAGES["Courier Scam"]
-        st.session_state.analysis_done = False
-        st.rerun()
-    if st.button("✅ Safe Message Sample"):
-        st.session_state.input_text = SAMPLE_MESSAGES["Safe Message"]
-        st.session_state.analysis_done = False
-        st.rerun()
+        st.markdown('<div class="sidebar-section-title">Safety Checklist</div>', unsafe_allow_html=True)
+        safe1 = st.checkbox("Never share OTP")
+        safe2 = st.checkbox("Never share UPI PIN")
+        safe3 = st.checkbox("Check links before clicking")
+        safe4 = st.checkbox("Verify sender identity")
+        if safe1 and safe2 and safe3 and safe4:
+            st.success("✅ You're following all safety practices!")
+
+        st.markdown('<div class="sidebar-section-title" style="margin-top:.8rem">Model Performance</div>', unsafe_allow_html=True)
+        if models and models.get('model_risk'):
+            st.markdown("""
+            <div class="stat-row">
+                <div class="stat-card"><div class="sv">99.9%</div><div class="sl">Binary Accuracy</div></div>
+                <div class="stat-card"><div class="sv">94.5%</div><div class="sl">Type Accuracy</div></div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        st.markdown('<div class="sidebar-section-title" style="margin-top:.8rem">Quick Test Messages</div>', unsafe_allow_html=True)
+
+        if st.button("📧 UPI Fraud Sample"):
+            st.session_state.input_text = SAMPLE_MESSAGES["UPI Fraud"]
+            st.session_state.analysis_done = False
+            st.rerun()
+        if st.button("💼 Job Scam Sample"):
+            st.session_state.input_text = SAMPLE_MESSAGES["Job Scam"]
+            st.session_state.analysis_done = False
+            st.rerun()
+        if st.button("🎲 Lottery Scam Sample"):
+            st.session_state.input_text = SAMPLE_MESSAGES["Lottery Scam"]
+            st.session_state.analysis_done = False
+            st.rerun()
+        if st.button("🔗 Phishing Sample"):
+            st.session_state.input_text = SAMPLE_MESSAGES["Phishing"]
+            st.session_state.analysis_done = False
+            st.rerun()
+        if st.button("📦 Courier Scam Sample"):
+            st.session_state.input_text = SAMPLE_MESSAGES["Courier Scam"]
+            st.session_state.analysis_done = False
+            st.rerun()
+        if st.button("✅ Safe Message Sample"):
+            st.session_state.input_text = SAMPLE_MESSAGES["Safe Message"]
+            st.session_state.analysis_done = False
+            st.rerun()
+
+        # Auto voice toggle
+        st.markdown('<div class="sidebar-section-title" style="margin-top:.8rem">Preferences</div>', unsafe_allow_html=True)
+        st.session_state.auto_voice_enabled = st.checkbox("🔊 Auto voice alert", value=st.session_state.auto_voice_enabled)
 
 # ══════════════════════════════════════════════════════
 # MAIN UI
 # ══════════════════════════════════════════════════════
+# Sidebar toggle button (outside sidebar)
+col_toggle, _ = st.columns([0.1, 0.9])
+with col_toggle:
+    if st.button("☰", help="Toggle sidebar"):
+        st.session_state.show_sidebar = not st.session_state.show_sidebar
+        st.rerun()
+
 st.markdown("""
 <div class="hero-section">
     <div class="hero-bg-lines"></div>
@@ -715,11 +792,10 @@ st.markdown("""
 
 st.markdown('<div class="section-label">Input Message</div>', unsafe_allow_html=True)
 
-# ── VOICE INPUT: mic first (updates session state BEFORE text area) ──
+# ── VOICE INPUT ──
 col_mic, col_text = st.columns([1, 6])
 
 with col_mic:
-    st.markdown("####")  # vertical alignment
     text_from_voice = speech_to_text(
         language='en',
         start_prompt="🎤",
@@ -727,12 +803,14 @@ with col_mic:
         just_once=True,
         use_container_width=True
     )
-    # If voice input provided new text, update session state and rerun
-    if text_from_voice and text_from_voice != st.session_state.get('input_text', ''):
+    if text_from_voice and text_from_voice != st.session_state.input_text:
         st.session_state.input_text = text_from_voice
         st.rerun()
 
 with col_text:
+    # Use a text area with a unique key, but we also need to detect changes.
+    # We'll store previous value in session state and compare after widget rendering.
+    # Streamlit automatically updates st.session_state.input_text when user types.
     st.text_area(
         "Paste the message you received:",
         height=130,
@@ -740,6 +818,11 @@ with col_text:
         key="input_text",
         label_visibility="collapsed"
     )
+
+# Check if input text changed since last analysis (user typed manually)
+if st.session_state.input_text != st.session_state.last_analyzed_text:
+    st.session_state.analysis_done = False
+    st.session_state.results = None
 
 col1, col2, col3 = st.columns([1.5, 2, 1.5])
 with col2:
@@ -753,21 +836,17 @@ if analyze_clicked:
         st.error("Models not loaded. Please check model files.")
     else:
         with st.spinner("🔬 Scanning message through AI engine..."):
-            progress_bar = st.progress(0)
-            for i in range(100):
-                time.sleep(0.01)
-                progress_bar.progress(i + 1)
-
+            # (No fake progress bar – just spinner)
             cleaned  = clean_text(st.session_state.input_text)
             vec      = models['tfidf'].transform([cleaned])
             prob_spam = models['model_risk'].predict_proba(vec)[0][1] * 100
 
             if prob_spam < 30:
-                risk = "Safe"; risk_class = "safe"
+                risk = "Safe"
             elif prob_spam < 75:
-                risk = "Suspicious"; risk_class = "suspicious"
+                risk = "Suspicious"
             else:
-                risk = "High Risk"; risk_class = "high"
+                risk = "High Risk"
 
             if risk == "Safe":
                 fraud_type = "None"
@@ -786,12 +865,11 @@ if analyze_clicked:
             st.session_state.results = {
                 'prob_spam':   prob_spam,
                 'risk':        risk,
-                'risk_class':  risk_class,
                 'fraud_type':  fraud_type,
                 'highlighted': highlighted,
                 'tips':        tips
             }
-            progress_bar.empty()
+            st.session_state.last_analyzed_text = st.session_state.input_text
 
 # ── RESULTS ──
 if st.session_state.analysis_done and st.session_state.results:
@@ -802,7 +880,6 @@ if st.session_state.analysis_done and st.session_state.results:
 
     # Metric cards
     prob_color = "mc-safe" if res['risk']=="Safe" else ("mc-warn" if res['risk']=="Suspicious" else "mc-danger")
-    risk_color = prob_color
     action     = "No Action" if res['risk'] == "Safe" else ("Report Now" if res['risk'] == "High Risk" else "Be Cautious")
     action_col = "mc-safe" if res['risk']=="Safe" else ("mc-danger" if res['risk']=="High Risk" else "mc-warn")
 
@@ -816,7 +893,7 @@ if st.session_state.analysis_done and st.session_state.results:
     with c2:
         st.markdown(f"""
         <div class="metric-card">
-            <div class="mc-value {risk_color}">{res['risk']}</div>
+            <div class="mc-value {prob_color}">{res['risk']}</div>
             <div class="mc-label">Risk Level</div>
         </div>""", unsafe_allow_html=True)
     with c3:
@@ -863,49 +940,52 @@ if st.session_state.analysis_done and st.session_state.results:
 
     st.markdown("---")
 
-    # ========== AUTOMATIC VOICE ALERT (once per unique result) ==========
-    current_hash = hashlib.md5(f"{res['risk']}_{res['fraud_type']}".encode()).hexdigest()
-    if st.session_state.spoken_for_hash != current_hash:
-        st.session_state.spoken_for_hash = current_hash
-        if res['risk'] == "High Risk":
-            repeat = 3
-            message = f"High risk scam detected. Fraud type: {res['fraud_type']}. Do not respond."
-        elif res['risk'] == "Suspicious":
-            repeat = 1
-            message = f"Suspicious message detected. Fraud type: {res['fraud_type']}. Be cautious."
-        else:  # Safe
-            repeat = 1
-            message = "Message appears safe. Stay vigilant."
-        # Escape for JavaScript
-        message_js = message.replace("'", "\\'").replace('"', '&quot;')
-        js_code = f"""
-        <script>
-        (function() {{
-            var msg = "{message_js}";
-            var times = {repeat};
-            function speak(i) {{
-                if (i >= times) return;
-                var utterance = new SpeechSynthesisUtterance(msg);
-                utterance.rate = 0.9;
-                utterance.pitch = 1;
-                utterance.volume = 1;
-                utterance.onend = function() {{ speak(i+1); }};
-                window.speechSynthesis.speak(utterance);
-            }}
-            speak(0);
-        }})();
-        </script>
-        """
-        st.components.v1.html(js_code, height=0)
+    # ========== AUTOMATIC VOICE ALERT (if enabled) ==========
+    if st.session_state.auto_voice_enabled:
+        current_hash = hashlib.md5(f"{res['risk']}_{res['fraud_type']}".encode()).hexdigest()
+        if st.session_state.spoken_for_hash != current_hash:
+            st.session_state.spoken_for_hash = current_hash
+            if res['risk'] == "High Risk":
+                repeat = 3
+                message = f"High risk scam detected. Fraud type: {res['fraud_type']}. Do not respond."
+            elif res['risk'] == "Suspicious":
+                repeat = 1
+                message = f"Suspicious message detected. Fraud type: {res['fraud_type']}. Be cautious."
+            else:
+                repeat = 1
+                message = "Message appears safe. Stay vigilant."
+            message_js = message.replace("'", "\\'").replace('"', '&quot;')
+            js_code = f"""
+            <script>
+            (function() {{
+                var msg = "{message_js}";
+                var times = {repeat};
+                function speak(i) {{
+                    if (i >= times) return;
+                    var utterance = new SpeechSynthesisUtterance(msg);
+                    utterance.rate = 0.9;
+                    utterance.pitch = 1;
+                    utterance.volume = 1;
+                    utterance.onend = function() {{ speak(i+1); }};
+                    utterance.onerror = function() {{}};
+                    window.speechSynthesis.speak(utterance);
+                }}
+                speak(0);
+            }})();
+            </script>
+            """
+            st.components.v1.html(js_code, height=0)
 
-    # ========== MANUAL VOICE ALERT BUTTON (for all risk levels) ==========
+    # ========== MANUAL VOICE ALERT BUTTON (fixed double rerun) ==========
     col_speak, _ = st.columns([1, 5])
     with col_speak:
-        if st.button("🔊 Speak Alert", use_container_width=True):
+        # Use on_click to set a flag, then trigger JS in the main flow
+        def trigger_manual_alert():
             st.session_state.speak_alert = True
-            st.rerun()
 
-    # ── TRIGGER MANUAL TEXT‑TO‑SPEECH (if button was clicked) ──
+        st.button("🔊 Speak Alert", on_click=trigger_manual_alert, use_container_width=True)
+
+    # Trigger manual alert if flag is set (and then clear it without extra rerun)
     if st.session_state.get('speak_alert'):
         # Choose message based on risk
         if res['risk'] == "High Risk":
@@ -922,13 +1002,15 @@ if st.session_state.analysis_done and st.session_state.results:
             utterance.rate = 0.9;
             utterance.pitch = 1;
             utterance.volume = 1;
+            utterance.onerror = function() {{}};
             window.speechSynthesis.speak(utterance);
             </script>
             """,
             height=0
         )
+        # Clear flag without rerunning
         st.session_state.speak_alert = False
-        st.rerun()
+        # No st.rerun() here
 
     # Pattern analysis expander
     with st.expander("🔍  Pattern Analysis — Highlighted Keywords", expanded=True):
@@ -960,10 +1042,29 @@ if st.session_state.analysis_done and st.session_state.results:
     st.markdown("---")
     st.markdown('<div class="section-label">Share This Analysis</div>', unsafe_allow_html=True)
     s1, s2, s3, s4 = st.columns(4)
-    with s1: st.button("📧  Email",     use_container_width=True)
-    with s2: st.button("📱  WhatsApp",  use_container_width=True)
-    with s3: st.button("🐦  Twitter",   use_container_width=True)
-    with s4: st.button("📋  Copy Link", use_container_width=True)
+
+    # Prepare share text
+    share_text = f"🔍 AI Fraud Shield Analysis:\nRisk: {res['risk']} ({res['prob_spam']:.1f}% scam probability)\nFraud Type: {res['fraud_type']}\nMessage: {st.session_state.input_text[:100]}..."
+    share_url = "https://your-app-url.com"  # Replace with actual app URL if deployed
+
+    with s1:
+        # Email
+        email_subject = "Fraud Alert Analysis"
+        email_body = share_text.replace(" ", "%20").replace("\n", "%0A")
+        st.markdown(f'<a href="mailto:?subject={email_subject}&body={email_body}" target="_blank"><button style="width:100%; background:var(--panel); border:1px solid var(--border); color:var(--muted); border-radius:8px; padding:0.5rem;">📧 Email</button></a>', unsafe_allow_html=True)
+    with s2:
+        # WhatsApp
+        wa_text = share_text.replace(" ", "%20").replace("\n", "%0A")
+        st.markdown(f'<a href="https://wa.me/?text={wa_text}" target="_blank"><button style="width:100%; background:var(--panel); border:1px solid var(--border); color:var(--muted); border-radius:8px; padding:0.5rem;">📱 WhatsApp</button></a>', unsafe_allow_html=True)
+    with s3:
+        # Twitter
+        tweet_text = share_text.replace(" ", "%20").replace("\n", "%0A")
+        st.markdown(f'<a href="https://twitter.com/intent/tweet?text={tweet_text}" target="_blank"><button style="width:100%; background:var(--panel); border:1px solid var(--border); color:var(--muted); border-radius:8px; padding:0.5rem;">🐦 Twitter</button></a>', unsafe_allow_html=True)
+    with s4:
+        # Copy link (simulate copy via JavaScript alert)
+        if st.button("📋 Copy Link", use_container_width=True):
+            st.info("Link copied to clipboard (simulated). In a real app, you'd use JavaScript.")
+            # Actual copy would require JS, but we can show a message.
 
 # ── FOOTER ──
 st.markdown("---")
