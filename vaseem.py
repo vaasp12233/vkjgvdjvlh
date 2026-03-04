@@ -21,7 +21,7 @@ if 'analysis_done' not in st.session_state:
 if 'results' not in st.session_state:
     st.session_state.results = None
 
-# --- CUSTOM CSS (Modern Dark Theme, Glassmorphism, Tech Look) ---
+# --- CUSTOM CSS (unchanged) ---
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap');
@@ -709,13 +709,33 @@ st.markdown("""
 
 st.markdown('<div class="section-label">Input Message</div>', unsafe_allow_html=True)
 
-st.text_area(
-    "Paste the message you received:",
-    height=130,
-    placeholder="Type or paste a suspicious message here...",
-    key="input_text",
-    label_visibility="collapsed"
-)
+# ── NEW: Voice input column layout ───────────────────────────
+col_text, col_mic = st.columns([6, 1])
+
+with col_text:
+    st.text_area(
+        "Paste the message you received:",
+        height=130,
+        placeholder="Type, paste, or speak a suspicious message here...",
+        key="input_text",
+        label_visibility="collapsed"
+    )
+
+with col_mic:
+    st.markdown("####")  # vertical alignment
+    text_from_voice = speech_to_text(
+        language='en',
+        start_prompt="🎤",
+        stop_prompt="⏹️",
+        just_once=True,
+        use_container_width=True
+    )
+
+# If voice input provided new text, update session state and rerun to show it
+if text_from_voice and text_from_voice != st.session_state.input_text:
+    st.session_state.input_text = text_from_voice
+    st.rerun()
+# ──────────────────────────────────────────────────────────────
 
 col1, col2, col3 = st.columns([1.5, 2, 1.5])
 with col2:
