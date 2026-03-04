@@ -1,6 +1,7 @@
 """
 AI Fraud Shield Pro — v4.0
 Full UI/UX polish + circular mic button + all visual fixes.
+Sidebar is now static (always visible).
 """
 
 import streamlit as st
