@@ -20,6 +20,8 @@ if 'analysis_done' not in st.session_state:
     st.session_state.analysis_done = False
 if 'results' not in st.session_state:
     st.session_state.results = None
+if 'speak_alert' not in st.session_state:          # new flag for TTS
+    st.session_state.speak_alert = False
 
 # --- CUSTOM CSS (unchanged) ---
 st.markdown("""
@@ -325,7 +327,6 @@ hr { border-color: var(--border) !important; }
     line-height: 1.1;
     margin-bottom: .35rem;
 }
-
 .metric-card .mc-label {
     font-family: var(--font-body);
     font-weight: 500;
@@ -710,9 +711,7 @@ st.markdown("""
 
 st.markdown('<div class="section-label">Input Message</div>', unsafe_allow_html=True)
 
-# ── NEW: Voice input column layout ───────────────────────────
-# ── NEW: Voice input column layout ───────────────────────────
-# Swap columns so mic comes first, then text area
+# ── VOICE INPUT: mic first (updates session state BEFORE text area) ──
 col_mic, col_text = st.columns([1, 6])
 
 with col_mic:
@@ -724,7 +723,7 @@ with col_mic:
         just_once=True,
         use_container_width=True
     )
-    # If voice input provided new text, update session state BEFORE text area is created
+    # If voice input provided new text, update session state and rerun
     if text_from_voice and text_from_voice != st.session_state.get('input_text', ''):
         st.session_state.input_text = text_from_voice
         st.rerun()
@@ -737,12 +736,6 @@ with col_text:
         key="input_text",
         label_visibility="collapsed"
     )
-
-# If voice input provided new text, update session state and rerun to show it
-if text_from_voice and text_from_voice != st.session_state.input_text:
-    st.session_state.input_text = text_from_voice
-    st.rerun()
-# ──────────────────────────────────────────────────────────────
 
 col1, col2, col3 = st.columns([1.5, 2, 1.5])
 with col2:
@@ -865,6 +858,37 @@ if st.session_state.analysis_done and st.session_state.results:
         </div>""", unsafe_allow_html=True)
 
     st.markdown("---")
+
+    # ── VOICE ALERT BUTTON (only for Suspicious/High Risk) ──
+    if res['risk'] in ["Suspicious", "High Risk"]:
+        col_speak, _ = st.columns([1, 5])
+        with col_speak:
+            if st.button("🔊 Speak Alert", use_container_width=True):
+                st.session_state.speak_alert = True
+                st.rerun()
+
+    # ── TRIGGER TEXT‑TO‑SPEECH ──
+    if st.session_state.get('speak_alert'):
+        # Construct the message to be spoken
+        text_to_speak = f"Alert! {res['risk']} scam detected. Fraud type: {res['fraud_type']}. Do not respond to this message."
+        # Escape for JavaScript
+        text_to_speak_js = text_to_speak.replace("'", "\\'").replace('"', '&quot;')
+        # Inject a tiny HTML with JavaScript that speaks and then resets the flag via rerun
+        st.components.v1.html(
+            f"""
+            <script>
+            var utterance = new SpeechSynthesisUtterance("{text_to_speak_js}");
+            utterance.rate = 0.9;   // slightly slower for clarity
+            utterance.pitch = 1;
+            utterance.volume = 1;
+            window.speechSynthesis.speak(utterance);
+            </script>
+            """,
+            height=0
+        )
+        # Reset flag so it doesn't speak again on next rerun
+        st.session_state.speak_alert = False
+        st.rerun()
 
     # Pattern analysis expander
     with st.expander("🔍  Pattern Analysis — Highlighted Keywords", expanded=True):
