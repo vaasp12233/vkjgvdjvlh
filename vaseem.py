@@ -710,16 +710,9 @@ st.markdown("""
 st.markdown('<div class="section-label">Input Message</div>', unsafe_allow_html=True)
 
 # ── NEW: Voice input column layout ───────────────────────────
-col_text, col_mic = st.columns([6, 1])
-
-with col_text:
-    st.text_area(
-        "Paste the message you received:",
-        height=130,
-        placeholder="Type, paste, or speak a suspicious message here...",
-        key="input_text",
-        label_visibility="collapsed"
-    )
+# ── NEW: Voice input column layout ───────────────────────────
+# Swap columns so mic comes first, then text area
+col_mic, col_text = st.columns([1, 6])
 
 with col_mic:
     st.markdown("####")  # vertical alignment
@@ -729,6 +722,19 @@ with col_mic:
         stop_prompt="⏹️",
         just_once=True,
         use_container_width=True
+    )
+    # If voice input provided new text, update session state BEFORE text area is created
+    if text_from_voice and text_from_voice != st.session_state.get('input_text', ''):
+        st.session_state.input_text = text_from_voice
+        st.rerun()
+
+with col_text:
+    st.text_area(
+        "Paste the message you received:",
+        height=130,
+        placeholder="Type, paste, or speak a suspicious message here...",
+        key="input_text",
+        label_visibility="collapsed"
     )
 
 # If voice input provided new text, update session state and rerun to show it
